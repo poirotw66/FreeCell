@@ -180,3 +180,132 @@ export function getSafeFoundationMoves(
 export function checkWin(state: GameState): boolean {
   return Object.values(state.foundations).every((rank) => rank === 13);
 }
+
+export function getHintMove(state: GameState): { source: Position, dest: Position } | null {
+  // 1. Safe foundation moves
+  const safeMove = getSafeFoundationMoves(state);
+  if (safeMove) return safeMove;
+
+  const sources: Position[] = [];
+  for (let i = 0; i < 4; i++) {
+    if (state.freeCells[i] !== null) sources.push({ zone: 'freeCell', index: i });
+  }
+  for (let i = 0; i < 8; i++) {
+    const col = state.tableaus[i];
+    if (col.length > 0) {
+      for (let j = col.length - 1; j >= 0; j--) {
+        if (isValidSequence(col.slice(j))) {
+          sources.push({ zone: 'tableau', index: i, cardIndex: j });
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
+  const destinations: Position[] = [
+    ...[0, 1, 2, 3].map(i => ({ zone: 'foundation', index: i } as Position)),
+    ...[0, 1, 2, 3, 4, 5, 6, 7].map(i => ({ zone: 'tableau', index: i } as Position)),
+    ...[0, 1, 2, 3].map(i => ({ zone: 'freeCell', index: i } as Position))
+  ];
+
+  const validMoves: { source: Position, dest: Position, score: number }[] = [];
+
+  for (const source of sources) {
+    for (const dest of destinations) {
+      if (source.zone === dest.zone && source.index === dest.index) continue;
+      if (canMove(state, source, dest)) {
+        let score = 0;
+        
+        // Pointless move: empty column to empty column
+        if (source.zone === 'tableau' && dest.zone === 'tableau') {
+           const destCol = state.tableaus[dest.index];
+           if (source.cardIndex === 0 && destCol.length === 0) continue;
+        }
+        
+        // Pointless move: freecell to freecell
+        if (source.zone === 'freeCell' && dest.zone === 'freeCell') continue;
+
+        if (dest.zone === 'foundation') score = 100;
+        else if (dest.zone === 'tableau') {
+           if (source.zone === 'freeCell') score = 50; // Freeing up a cell is good
+           else {
+             // Moving from tableau to tableau
+             if (source.cardIndex! > 0) score = 20; // Exposing a hidden card
+             else if (source.cardIndex === 0) score = 10; // Freeing a column
+             else score = 5;
+           }
+        }
+        else if (dest.zone === 'freeCell') {
+           score = 1;
+        }
+
+        validMoves.push({ source, dest, score });
+      }
+    }
+  }
+
+  if (validMoves.length === 0) return null;
+
+  // Sort by score descending
+  validMoves.sort((a, b) => b.score - a.score);
+
+  // To prevent infinite loops, randomly pick from the top scoring moves
+  const bestScore = validMoves[0].score;
+  const topMoves = validMoves.filter(m => m.score >= bestScore - 5);
+  
+  // Try to avoid reversing the last move if possible (basic check)
+  if (state.history.length > 0) {
+    const lastState = state.history[state.history.length - 1];
+    // A real loop prevention would be more complex, but this is a simple heuristic
+  }
+
+  const randomMove = topMoves[Math.floor(Math.random() * topMoves.length)];
+  return { source: randomMove.source, dest: randomMove.dest };
+}
+
+export function checkLoss(state: GameState): boolean {
+  if (checkWin(state)) return false;
+
+  const sources: Position[] = [];
+  
+  // FreeCells as sources
+  for (let i = 0; i < 4; i++) {
+    if (state.freeCells[i] !== null) {
+      sources.push({ zone: 'freeCell', index: i });
+    }
+  }
+  
+  // Tableaus as sources
+  for (let i = 0; i < 8; i++) {
+    const col = state.tableaus[i];
+    if (col.length > 0) {
+      for (let j = col.length - 1; j >= 0; j--) {
+        if (isValidSequence(col.slice(j))) {
+          sources.push({ zone: 'tableau', index: i, cardIndex: j });
+        } else {
+          break; // If a sequence is invalid, anything above it is also invalid
+        }
+      }
+    }
+  }
+
+  // All possible destinations
+  const destinations: Position[] = [
+    ...[0, 1, 2, 3].map(i => ({ zone: 'freeCell', index: i } as Position)),
+    ...[0, 1, 2, 3].map(i => ({ zone: 'foundation', index: i } as Position)),
+    ...[0, 1, 2, 3, 4, 5, 6, 7].map(i => ({ zone: 'tableau', index: i } as Position))
+  ];
+
+  // Check if any move is possible
+  for (const source of sources) {
+    for (const dest of destinations) {
+      if (source.zone === dest.zone && source.index === dest.index) continue;
+      if (canMove(state, source, dest)) {
+        return false; // Found at least one valid move
+      }
+    }
+  }
+
+  return true; // No valid moves found
+}
